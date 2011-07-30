@@ -3671,6 +3671,17 @@ static bool isOccluded(Map *map, v3s16 p0, v3s16 p1, float step, float stepfac,
 	return false;
 }
 
+#include <csetjmp>
+#include <csignal>
+#include <set>
+
+static sigjmp_buf damn;
+void sigtrap(int i) { 
+	siglongjmp(damn, 1);
+}
+
+static std::set<scene::IMeshBuffer*> blacklist;
+
 void ClientMap::renderMap(video::IVideoDriver* driver, s32 pass)
 {
 	INodeDefManager *nodemgr = m_gamedef->ndef();
@@ -4003,8 +4014,25 @@ void ClientMap::renderMap(video::IVideoDriver* driver, s32 pass)
 						material has the same texture.
 					*/
 					driver->setMaterial(buf->getMaterial());
-					driver->drawMeshBuffer(buf);
-					vertex_count += buf->getVertexCount();
+					if (blacklist.count(buf)==0) {
+						signal(SIGSEGV, sigtrap);
+						if(sigsetjmp(damn,0)==0) {
+							//dstream<<"index "<<j<<"  vertices "<<buf->getVertexCount()<<"  indices "<<buf->getIndexCount()<<std::endl;
+							driver->drawMeshBuffer(buf);
+						} else {
+							dstream<<"########## Caught a segfault. ##########"<<std::endl;
+							// We now need to unblock
+							sigset_t ss;
+							sigemptyset(&ss);
+							sigaddset(&ss, SIGSEGV);
+							sigprocmask(SIG_UNBLOCK, &ss, NULL);
+							
+							blacklist.insert(buf);
+						}
+						signal(SIGSEGV, SIG_DFL);
+					} else {
+						//dstream<<"#### skipping blacklisted item ####"<<std::endl;
+					}					vertex_count += buf->getVertexCount();
 					meshbuffer_count++;
 					stuff_actually_drawn = true;
 				}
