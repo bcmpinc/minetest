@@ -17,10 +17,25 @@ class Package:
                 self.offset += type.size
                 return self
         return token
+    def __vwrapper(type):
+        type = Struct(type)
+        def token(self, *value):
+            if len(value) == 0:
+                r = type.unpack_from(self.buffer, self.offset)
+                self.offset += type.size
+                return r
+            else:
+                if len(value)==1:
+                    value = value[0]
+                self.buffer += type.pack(*value)
+                self.offset += type.size
+                return self
+        return token
     
     s32 = __wrapper("!i")
     u32 = __wrapper("!I")
     s16 = __wrapper("!h")
+    v3s16 = __vwrapper("!hhh")
     u16 = __wrapper("!H")
     u8  = __wrapper("!B")
     player_name = __wrapper("!20s")
@@ -51,6 +66,14 @@ class __self:
     def __setattr__(self, name, value):
         globals()[name]=value
 
+class Node:
+    """These are stored in a complicated way."""
+    def __init__(self, p0, p1, p2):
+        if p0<0x80:
+            self.content = p0
+        else:
+            self.content = (p0<<4) + (p2>>4)
+
 self = __self()
 protocol_id = 0x4f457403
 peer = 0
@@ -69,6 +92,7 @@ def basic(channel=0):
     return p
 
 def reliable():
+    # TODO: cache the message and retransmit if not acknowledged
     p = self.basic()
     p.u8(3) # reliable
     p.u16(self.seqnr) # sequence
@@ -89,7 +113,7 @@ def connect(hostname='127.0.0.1', port=30000):
         self.wait()
     print "Connected"
     self.connected = True
-    self.__handle.connected()
+    __handle.connected()
 
 # message sending
 def init(name, pwd):
@@ -105,7 +129,6 @@ def init(name, pwd):
     p.player_name(name)
     p.password(pwd)
     p.u16(1) # protocol version
-    print repr(p.buffer), p.offset
     p.send()
 
 def init2():
@@ -130,14 +153,14 @@ def setpos((x,y,z), pitch, yaw):
     p.s32(int(yaw*100))
     print "Setting position to", x, y, z
     p.send()        
-    self.__handle.move((x,y,z))
+    __handle.move((x,y,z))
 
 def chat(msg):
     p = self.reliable()
     p.u8(1) # original
     p.u16(0x32) # chat message
     print msg
-    self.__handle.echo("<%s> %s"%(self.name, msg))
+    __handle.echo("<%s> %s"%(self.name, msg))
     msg = codecs.getencoder("utf_16_be")(msg)[0]
     p.u16(len(msg)/2)
     p.append(msg)
@@ -146,7 +169,7 @@ def chat(msg):
 def disconnect():
     print "Disconnecting"
     self.connected = False
-    self.__handle.disconnect()
+    __handle.disconnect()
     p = self.basic()
     p.u8(0) # control
     p.u8(3) # disconnect
@@ -159,6 +182,24 @@ def ack(channel, num):
     p.u16(num)
     p.send()
     # print "[acknowledged %d]" % num,
+
+def got_blocks(pos_array):
+    p = self.reliable()
+    p.u8(1) # original
+    p.u16(0x24) # gotblocks
+    p.u8(len(pos_array)) # length
+    for i in pos_array:
+        p.v3s16(i) # (x,y,z)
+    p.send()
+
+def deleted_blocks(pos_array):
+    p = self.reliable()
+    p.u8(1) # original
+    p.u16(0x25) # deletedblocks
+    p.u8(len(pos_array)) # length
+    for i in pos_array:
+        p.v3s16(i) # (x,y,z)
+    p.send()
 
 # handlers
 class __proxy:
@@ -179,9 +220,9 @@ def install_handler(handler):
             f = getattr(handler,i)
             if callable(f):
                 print "\t%s" % i
-                if not i in self.__handle.handlers:
-                    self.__handle.handlers[i] = []
-                self.__handle.handlers[i].append(f)
+                if not i in __handle.handlers:
+                    __handle.handlers[i] = []
+                __handle.handlers[i].append(f)
 
 # Package reading and handling.
 
@@ -204,6 +245,8 @@ def wait(*args):
     
     type = p.u8()
     if type==3: # reliable
+        # TODO: prevent receiving duplicates
+        # TODO: make sure these are handled in-order.
         seq = p.u16()
         msg += " reliable with seq = %d" % seq
         self.ack(channel, seq) # acknowledge receipt
@@ -251,33 +294,33 @@ def wait(*args):
             if version != 20:
                 raise AssertionError("Server version is not 20.")
             self.init2()
-            self.__handle.logged_in()
+            __handle.logged_in()
         elif cmd==0x20: # block data
             # block node coordinates
-            x = p.s16()
-            y = p.s16()
-            z = p.s16()
+            pos = p.v3s16() 
             flags = p.u8()
             nodecount = 16**3
-            print msg, "block data @ (%d,%d,%d) flags=%s" % (x,y,z,bin(flags))
+            print msg, "block data @ (%d,%d,%d) flags=%s" % (pos+(bin(flags),))
             dec = zlib.decompressobj()
             data = dec.decompress(p.remains())
             if len(data) != nodecount * 3:
                 raise AssertionError("block data size mismatch: %d != %d" % (len(data), nodecount * 3))
+
+            def nodes(x,y,z):
+                i = x + y*16 + z*256
+                return Node(ord(data[i]), ord(data[i+nodecount]), ord(data[i+2*nodecount]))
+                            
+            __handle.blockdata(pos,nodes)
             p = Package(dec.unused_data)
             
         elif cmd==0x21: # add node
             # block node coordinates
-            x = p.s16()
-            y = p.s16()
-            z = p.s16()
-            print msg, "add node @ (%d,%d,%d)" % (x,y,z)
+            pos = p.v3s16()
+            print msg, "add node @ (%d,%d,%d)" % pos
         elif cmd==0x22: # remove node
             # block node coordinates
-            x = p.s16()
-            y = p.s16()
-            z = p.s16()
-            print msg, "remove node @ (%d,%d,%d)" % (x,y,z)
+            pos = p.v3s16()
+            print msg, "remove node @ (%d,%d,%d)" % pos
         elif cmd==0x24: # player info
             print msg, "playerinfo:"
             while p.available():
@@ -292,37 +335,40 @@ def wait(*args):
         elif cmd==0x29: # server time
             time = p.u16()
             print msg, "time =", time
-            self.__handle.time(time)
+            __handle.time(time)
         elif cmd==0x30: # chat message
             length = p.u16()
             chat = codecs.getdecoder("utf_16_be")(p.remains())[0]
             print chat
-            self.__handle.chat(chat)
+            __handle.chat(chat)
         elif cmd==0x31: # add & remove active objects
-            print msg, "active objects:"
-            rem_cnt = p.u16()
-            for i in xrange(rem_cnt):
-                rem_id = p.u16()
-                print "\tremove %d" % rem_id
-            msg += " add"
-            add_cnt = p.u16()
-            for i in xrange(add_cnt):
-                add_id = p.u16()
-                objtype = p.u8()
-                length = p.u16()
-                data = p.obtain(length)
-                print "\tadd %d: type=%d, data=%s" % (add_id, objtype, repr(data))
+            try:
+                print msg, "active objects:"
+                rem_cnt = p.u16()
+                for i in xrange(rem_cnt):
+                    rem_id = p.u16()
+                    print "\tremove %d" % rem_id
+                msg += " add"
+                add_cnt = p.u16()
+                for i in xrange(add_cnt):
+                    add_id = p.u16()
+                    objtype = p.u8()
+                    length = p.u16()
+                    data = p.obtain(length)
+                    print "\tadd %d: type=%d, data=%s" % (add_id, objtype, repr(data))
+            except:
+                print >>sys.stderr, "Something went wrong parsing active objects"
         elif cmd==0x33: # tell hp
             hp = p.u8()
             print msg, "hp =", hp
-            self.__handle.hp(hp)
+            __handle.hp(hp)
         elif cmd==0x34: # move player to pos
             x = p.f1000()/10
             y = p.f1000()/10
             z = p.f1000()/10
             print msg, "moved to (%.2f,%.2f,%.2f)" % (x,y,z)
-            self.__handle.move((x,y,z))
-            self.__handle.setpos((x,y,z))
+            __handle.move((x,y,z))
+            __handle.setpos((x,y,z))
             self.pos = (x,y,z) # update local pos variable afterwards
             
             #pitch = p.f1000()
