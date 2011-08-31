@@ -26,3 +26,5 @@ src/lua/build/
 src/lua/CMakeFiles/
 *bak*
 *~
+*.pyc
+
