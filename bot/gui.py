@@ -3,6 +3,10 @@ import thread
 import sys
 import traceback
 import connect as m
+import math
+
+def lint(x):
+    return int(math.floor(x))
 
 class App:
     def __init__(self, master):
@@ -60,7 +64,7 @@ tilecolors={
     0x80c:'#b7b7de', # CONENT_GLASS
     0x015:'#674e2a', # CONTENT_FENCE
     0x80d:'#dbcab2', # CONTENT_MOSSYCOBBLE
-    0x80e:'#4e9a06', # CONTENT_GRAVEL
+    0x80e:'#9a4e06', # CONTENT_GRAVEL
     0x80f:'#cc0000', # CONTENT_SANDSTONE
     0x810:'#d3d7cf', # CONTENT_CACTUS
     0x811:'#aa3219', # CONTENT_BRICK
@@ -68,13 +72,17 @@ tilecolors={
     0x813:'#3a6912', # CONTENT_PAPYRUS    
 }
 
+SCALE=4
+WIDTH=128
+HEIGHT=128
 class Map:
     pos=(0,0,0)
     blocks={}
+    cache={}
     dirty=False
     def __init__(self, master):
-        self.image = PhotoImage(width=256, height=256)
-        self.canvas = Canvas(master, width=256, height=256, borderwidth=1, relief=SUNKEN)
+        self.image = PhotoImage(width=WIDTH*SCALE, height=HEIGHT*SCALE)
+        self.canvas = Canvas(master, width=WIDTH*SCALE, height=HEIGHT*SCALE, borderwidth=1, relief=SUNKEN)
         self.canvas.pack()
         self.canvas.create_image(2,2, image=self.image, anchor=NW)
         self.canvas.image = self.image
@@ -82,73 +90,68 @@ class Map:
         self.__schedule_repaint()
     def move(self, pos):
         self.pos=pos
-        # create set with block positions
-        sx = int(pos[0]-40)/16
-        ex = int(pos[0]+40)/16+1
-        sy = int(pos[1]-20)/16
-        ey = int(pos[1]+20)/16+1
-        sz = int(pos[2]-40)/16
-        ez = int(pos[2]+40)/16+1
-        poss = set([(x,y,z)
-                    for x in xrange(sx,ex)
-                    for y in xrange(sy,ey)
-                    for z in xrange(sz,ez)])
-        # compute difference with registered set
-        #dels = set(self.blocks.keys()) - poss
-        #adds = poss - set(self.blocks.keys())
-        #if (dels):
-        #    m.deleted_blocks(list(dels))
-        #    for i in dels:
-        #        del self.blocks[i]
-        #if (adds):
-        #    m.got_blocks(list(adds))
-        # schedule repaint
         self.__schedule_repaint()
     def blockdata(self, pos, nodes):
         self.blocks[pos] = nodes
         m.got_blocks([pos])
-        self.__schedule_repaint()
-    def __getnode(self, pos):
-        pos = [int(i) for i in pos]
-        block_pos = tuple([i/16 for i in pos])
-        if not block_pos in self.blocks:
-            return None
-        block = self.blocks[block_pos]
-        node_pos = [pos[i] - block_pos[i]*16 for i in xrange(3)]
-        return block(*node_pos)
+        cpos = (pos[0],pos[2])
+        if -2<pos[1]-self.pos[1]/16<2:
+            if cpos in self.cache:
+                del self.cache[cpos] #invalidate cache
+            self.__schedule_repaint()
     def __schedule_repaint(self):
         if not self.dirty:
             self.dirty = True
             root.after_idle(self.__repaint)
     def __repaint(self):
-        self.image.put('#ff00ff',(0,0,256,256))
-        for row in xrange(64):
-            for col in xrange(64):
-                for y in xrange(-16,16):
-                    n = self.__getnode((self.pos[0]-31.5+row, self.pos[1]-y, self.pos[2]+31.5-col))
-                    if n is None:
-                        continue
-                    c = n.content
-                    if c in tilecolors:
-                        self.image.put(tilecolors[c], (row*4,col*4,row*4+4,col*4+4))
-                        break
-                    elif c!=126:
-                        print c
+        print "Drawing map ...",
+        self.image.put('#ff00ff',(0,0,WIDTH*SCALE,HEIGHT*SCALE))
+        pos = (lint(self.pos[0]-WIDTH/2.0+.5), lint(self.pos[1]), lint(self.pos[2]+HEIGHT/2.0+.5))
+        for row in xrange(WIDTH):
+            for col in xrange(HEIGHT):
+                x=pos[0]+row
+                z=pos[2]-col
+                pillar = (x,z)
+                block_pillar = (x/16,z/16)
+                if not block_pillar in self.cache:
+                    self.cache[block_pillar]={}
+                if pillar in self.cache[block_pillar]:
+                    c=self.cache[block_pillar][pillar]
+                else:
+                    for y in xrange(pos[1]+16,pos[1]-16,-1):
+                        block_pos=(x/16,y/16,z/16)
+                        if not block_pos in self.blocks:
+                            continue                        
+                        n = self.blocks[block_pos](x%16,y%16,z%16)
+                        if n is None:
+                            continue
+                        c = n.content
+                        if c in tilecolors:
+                            self.cache[block_pillar][pillar]=c
+                            break
+                        elif c!=126:
+                            print c
+                    else:
+                        self.cache[block_pillar][pillar]=c=None
+                if not c is None:
+                    self.image.put(tilecolors[c], (row*SCALE,col*SCALE,row*SCALE+SCALE,col*SCALE+SCALE))                    
         self.dirty = False
+        print "done"
     def __click(self,event):
         pos = list(self.pos)
-        pos[0]+=(event.x-130)/4
-        pos[2]-=(event.y-130)/4
+        pos[0]+=(event.x-2-WIDTH*SCALE/2.0)/SCALE
+        pos[2]-=(event.y-2-HEIGHT*SCALE/2.0)/SCALE
         m.setpos(pos,0,0)
         print "clicked at", pos[0], pos[2]
 
 root = Tk()
 root.title("Minetest bot")
-chat = Chatbox(root)
-mapview = Map(root)
 
-m.install_handler(ShopKeeper())
+#shop = ShopKeeper()
+#m.install_handler(shop)
+chat = Chatbox(root)
 m.install_handler(chat)
+mapview = Map(root)
 m.install_handler(mapview)
 try:
     m.connect()

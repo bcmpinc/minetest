@@ -59,6 +59,16 @@ class Package:
             return self.s32()/1000.0
         else:
             return self.s32(int(value*1000))
+    def wstring(self, value=None):
+        if value is None:
+            length = self.u16()
+            return codecs.getdecoder("utf_16_be")(self.obtain(length*2))[0]
+        else:
+            value = codecs.getencoder("utf_16_be")(value)[0]
+            self.u16(len(value)/2)
+            self.append(value)
+            return self
+        
 
 class __self:
     def __getattr__(self, name):
@@ -121,7 +131,7 @@ def init(name, pwd):
     self.name = name
     from hashlib import sha1
     from base64 import b64encode
-    pwd = b64encode(sha1(pwd).digest())
+    pwd = b64encode(sha1(name+pwd).digest())
     p = self.reliable()
     p.u8(1) # original
     p.u16(0x10) # init
@@ -161,9 +171,7 @@ def chat(msg):
     p.u16(0x32) # chat message
     print msg
     __handle.echo("<%s> %s"%(self.name, msg))
-    msg = codecs.getencoder("utf_16_be")(msg)[0]
-    p.u16(len(msg)/2)
-    p.append(msg)
+    p.wstring(msg)
     p.send()
     
 def disconnect():
@@ -337,8 +345,7 @@ def wait(*args):
             print msg, "time =", time
             __handle.time(time)
         elif cmd==0x30: # chat message
-            length = p.u16()
-            chat = codecs.getdecoder("utf_16_be")(p.remains())[0]
+            chat = p.wstring()
             print chat
             __handle.chat(chat)
         elif cmd==0x31: # add & remove active objects
@@ -374,6 +381,9 @@ def wait(*args):
             #pitch = p.f1000()
             #yaw = p.f1000()
             #print "moved to (%.2f,%.2f,%.2f) pitch=%.2f yaw=%.2f" % (x,y,z,pitch,yaw)
+        elif cmd==0x35: # access denied
+            error = p.wstring()
+            print >>sys.stderr, msg, "access denied:", error
         else:
             print >>sys.stderr, msg, "unknown command", hex(cmd)
         return
