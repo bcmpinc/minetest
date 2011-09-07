@@ -287,7 +287,7 @@ def wait(*args):
         seqnum=p.u16()
         chunk_count=p.u16()
         chunk_num=p.u16()
-        print msg, "of splitted-type #%d - %d/%d" % (seqnum,chunk_num+1,chunk_count)
+        #print msg, "of splitted-type #%d - %d/%d" % (seqnum,chunk_num+1,chunk_count)
         if not seqnum in self.splitmap:
             self.splitmap[seqnum]=[None]*chunk_count
         if self.splitmap[seqnum][chunk_num] is None:

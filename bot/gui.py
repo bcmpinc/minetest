@@ -107,9 +107,50 @@ tilecolors={
     0x01e:'#ffcc66', # RAILS
 }
 
-SCALE=4
-WIDTH=128
-HEIGHT=128
+SCALE=2
+WIDTH=256
+HEIGHT=256
+class MapTile:
+    def __init__(self, canvas, cell, pos):
+        self.canvas = canvas
+        self.image = PhotoImage(width=16*SCALE, height=16*SCALE)
+        self.imgelt = canvas.create_image((cell[0]*16-pos[0]+WIDTH/2)*SCALE, (pos[2]-15-cell[1]*16+HEIGHT/2)*SCALE, image=self.image, anchor=NW)
+        canvas.tag_lower(self.imgelt)
+        self.dirty = True
+        self.cell = cell
+    def update(self,low,high,blocks):
+        if not self.dirty:
+            return
+        print "Updating tile", self.cell, "at coords", self.canvas.coords(self.imgelt)
+        from_cache = []
+        cur_block_y = None
+        cur_block = None
+        self.image.put('#ff00ff',(0,0,16*SCALE,16*SCALE))
+        for x in xrange(16):
+            for z in xrange(16):
+                for y in xrange(high,low,-1):
+                    if cur_block_y != y/16:
+                        cur_block_y = y/16
+                        block_pos=(self.cell[0],cur_block_y,self.cell[1])
+                        if not block_pos in blocks:
+                            blocks[block_pos]=m.get_node(block_pos)
+                        cur_block=blocks[block_pos]
+                    if cur_block is None:
+                        continue
+                    n = cur_block(x,y%16,15-z)
+                    if n is None:
+                        continue
+                    c = n.content
+                    if c==126:
+                        continue
+                    if c in tilecolors:
+                        if y==high and not c == 3:
+                            c=-1
+                        self.image.put(tilecolors[c], (x*SCALE,z*SCALE,x*SCALE+SCALE,z*SCALE+SCALE))                    
+                        break
+                    print hex(c)
+        self.dirty = False        
+
 class Map:
     pos=(0,0,0)
     blocks={}
@@ -118,17 +159,16 @@ class Map:
     name_tags={}
     dirty=False
     def __init__(self, master):
-        self.image = PhotoImage(width=WIDTH*SCALE, height=HEIGHT*SCALE)
         self.canvas = Canvas(master, width=WIDTH*SCALE, height=HEIGHT*SCALE, borderwidth=1, relief=SUNKEN)
         self.canvas.pack()
-        self.canvas.create_image(2,2, image=self.image, anchor=NW)
-        self.canvas.image = self.image
         self.canvas.bind("<Button-1>", self.__click)
-        self.__schedule_repaint()
+        #self.canvas.create_line(2,2,WIDTH*SCALE+2,HEIGHT*SCALE+2)
+        #self.canvas.create_line(2,HEIGHT*SCALE+2,WIDTH*SCALE+2,2)
     def move(self, pos):
         if self.pos[1] != pos[1]:
-            print "Map cache reset."
-            self.cache={}
+            print "Invalidate all map tiles."
+            for i in self.cache:
+                self.cache[i].dirty=True
         self.canvas.move(ALL, (-pos[0]+self.pos[0])*SCALE, (pos[2]-self.pos[2])*SCALE)
         self.pos=pos
         self.__schedule_repaint()
@@ -138,53 +178,26 @@ class Map:
         cpos = (pos[0],pos[2])
         if -2<pos[1]-self.pos[1]/16<2:
             if cpos in self.cache:
-                del self.cache[cpos] #invalidate cache
+                self.cache[cpos].dirty=True #invalidate cache
             self.__schedule_repaint()
     def __schedule_repaint(self):
         if not self.dirty:
             self.dirty = True
             root.after_idle(self.__repaint)
     def __repaint(self):
-        print "Drawing map ...",
-        self.image.put('#ff00ff',(0,0,WIDTH*SCALE,HEIGHT*SCALE))
-        pos = (lint(self.pos[0]-WIDTH/2.0+.5), lint(self.pos[1]), lint(self.pos[2]+HEIGHT/2.0+.5))
-        from_cache=[]
-        for row in xrange(WIDTH):
-            for col in xrange(HEIGHT):
-                x=-WIDTH/2+row
-                z=HEIGHT/2-col
-                pillar = (x,z)
-                block_pillar = (x/16,z/16)
-                if not block_pillar in self.cache:
-                    self.cache[block_pillar]={}
-                if pillar in self.cache[block_pillar]:
-                    c=self.cache[block_pillar][pillar]
-                else:
-                    for y in xrange(pos[1]+16,pos[1]-16,-1):
-                        block_pos=(x/16,y/16,z/16)
-                        if not block_pos in self.blocks:
-                            self.blocks[block_pos]=m.get_node(block_pos)
-                        if self.blocks[block_pos] is None:
-                            continue
-                        n = self.blocks[block_pos](x%16,y%16,z%16)
-                        if n is None:
-                            continue
-                        c = n.content
-                        if c in tilecolors:
-                            if y==pos[1]+16 and not c == 3:
-                                c=-1
-                            self.cache[block_pillar][pillar]=c
-                            break
-                        elif c!=126:
-                            print hex(c)
-                    else:
-                        self.cache[block_pillar][pillar]=c=None
-                if not c is None:
-                    self.image.put(tilecolors[c], (row*SCALE,col*SCALE,row*SCALE+SCALE,col*SCALE+SCALE))                    
+        px = lint(self.pos[0])/16
+        py = lint(self.pos[2])/16
+        dx = WIDTH/32
+        dy = HEIGHT/32
+        low = lint(self.pos[1]-16)
+        high = lint(self.pos[1]+16)
+        for y in xrange(py-dy,py+dy+1):
+            for x in xrange(px-dx,px+dx+1):
+                cell = (x,y)
+                if not cell in self.cache:
+                    self.cache[cell] = MapTile(self.canvas, cell, self.pos)
+                self.cache[cell].update(low, high, self.blocks)
         self.dirty = False
-        if from_cache:
-            m.got_blocks(from_cache)
-        print "done"
     def __click(self,event):
         pos = list(self.pos)
         pos[0]+=(event.x-2-WIDTH*SCALE/2.0)/SCALE
@@ -193,20 +206,22 @@ class Map:
         print "clicked at", pos[0], pos[2]
     def player_data(self, p):
         for i in p:
-            (x,y) = ((p[i][0][0]-self.pos[0]+2+WIDTH/2.0)*SCALE, (-p[i][0][2]+self.pos[2]+2+HEIGHT/2.0)*SCALE)
+            x = ( p[i][0][0]-self.pos[0]+WIDTH /2.0)*SCALE+2
+            y = (-p[i][0][2]+self.pos[2]+HEIGHT/2.0)*SCALE+2
             if not i in self.name_tags:
                 if not i in self.names:
                     continue
-                t = self.canvas.create_text(x, y, text=self.names[i], fill="white")
+                #t = self.canvas.create_text(x, y, text=self.names[i], fill="white")
+                t = self.canvas.create_text(x, y, text="X", fill="white")
                 self.name_tags[i] = t
             else:
                 self.canvas.coords(self.name_tags[i], x, y)
     def player_info(self, p):
         self.names = p
-        for i in self.name_tags:
-            if i not in p:
-                self.canvas.delete(self.name_tags[i])
-                del self.name_tags[i]
+        rm = set(self.name_tags.keys()) - set(p.keys())
+        for i in rm:
+            self.canvas.delete(self.name_tags[i])
+            del self.name_tags[i]
 
 root = Tk()
 root.title("Minetest bot")
