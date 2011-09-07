@@ -20,10 +20,25 @@ class App:
 class ShopKeeper:
     def setpos(self,(x,y,z)):
         #m.setpos((10,10.5,10),0,0)
-        m.chat("Shop open!")
+        #m.chat("Shop open!")
+        pass
     def disconnect(self):
-        m.chat("Shop closed!")
-        
+        #m.chat("Shop closed!")
+        pass
+    def chat(self, msg):
+        if msg[0]==u'<':
+            (name, msg) = msg.split(u'> ')
+            name=str(name[1:])
+            msg = msg.strip()
+            print repr(name),repr(msg)
+            if not name in m.player_id:
+                m.chat("I can't help you %s." % name)
+                return
+            id = m.player_id[name]
+            if msg == u'summon shop':
+                data = m.player_data[id]
+                m.setpos(data[0],0,0)
+            
 class Chatbox:
     def __init__(self, master):
         self.frame = Frame(master, borderwidth=1, relief=RAISED)
@@ -47,7 +62,7 @@ class Chatbox:
 class Position:
     def __init__(self, master):
         self.frame = Frame(master, borderwidth=1, relief=RAISED)
-        self.frame.pack(fill = BOTH)
+        self.frame.pack(fill = BOTH, side = LEFT)
         Label(self.frame, text="X:").grid(column=0,row=0)
         self.x = Entry(self.frame)
         self.x.grid(column=1,row=0)
@@ -105,11 +120,12 @@ tilecolors={
     0x813:'#3a6912', # CONTENT_PAPYRUS
 
     0x01e:'#ffcc66', # RAILS
+    0x816:'#66ff33', # BUSH
 }
 
-SCALE=2
-WIDTH=256
-HEIGHT=256
+SCALE=4
+WIDTH=150
+HEIGHT=150
 class MapTile:
     def __init__(self, canvas, cell, pos):
         self.canvas = canvas
@@ -118,23 +134,21 @@ class MapTile:
         canvas.tag_lower(self.imgelt)
         self.dirty = True
         self.cell = cell
-    def update(self,low,high,blocks):
-        if not self.dirty:
-            return
-        print "Updating tile", self.cell, "at coords", self.canvas.coords(self.imgelt)
+        self.scheduled = False
+    def repaint(self):
+        self.scheduled = False
+        #print "Updating tile", self.cell, "at coords", self.canvas.coords(self.imgelt)
         from_cache = []
         cur_block_y = None
         cur_block = None
         self.image.put('#ff00ff',(0,0,16*SCALE,16*SCALE))
         for x in xrange(16):
             for z in xrange(16):
-                for y in xrange(high,low,-1):
+                for y in xrange(self.high,self.low,-1):
                     if cur_block_y != y/16:
                         cur_block_y = y/16
-                        block_pos=(self.cell[0],cur_block_y,self.cell[1])
-                        if not block_pos in blocks:
-                            blocks[block_pos]=m.get_node(block_pos)
-                        cur_block=blocks[block_pos]
+                        block_pos = (self.cell[0], cur_block_y, self.cell[1])
+                        cur_block = m.get_node(block_pos)
                     if cur_block is None:
                         continue
                     n = cur_block(x,y%16,15-z)
@@ -144,19 +158,25 @@ class MapTile:
                     if c==126:
                         continue
                     if c in tilecolors:
-                        if y==high and not c == 3:
+                        if y==self.high and not c == 3:
                             c=-1
                         self.image.put(tilecolors[c], (x*SCALE,z*SCALE,x*SCALE+SCALE,z*SCALE+SCALE))                    
                         break
                     print hex(c)
-        self.dirty = False        
-
+        self.dirty = False
+    def schedule(self,low,high):
+        self.low = low
+        self.high = high
+        if self.dirty and not self.scheduled:
+            self.scheduled = True
+            root.after_idle(self.repaint)
+        
 class Map:
     pos=(0,0,0)
-    blocks={}
     cache={}
     names={}
     name_tags={}
+    name_arrows={}
     dirty=False
     def __init__(self, master):
         self.canvas = Canvas(master, width=WIDTH*SCALE, height=HEIGHT*SCALE, borderwidth=1, relief=SUNKEN)
@@ -173,12 +193,10 @@ class Map:
         self.pos=pos
         self.__schedule_repaint()
     def blockdata(self, pos, nodes):
-        self.blocks[pos] = nodes
-        m.got_blocks([pos])
-        cpos = (pos[0],pos[2])
+        cell = (pos[0],pos[2])
         if -2<pos[1]-self.pos[1]/16<2:
-            if cpos in self.cache:
-                self.cache[cpos].dirty=True #invalidate cache
+            if cell in self.cache:
+                self.cache[cell].dirty=True #invalidate cache
             self.__schedule_repaint()
     def __schedule_repaint(self):
         if not self.dirty:
@@ -189,14 +207,14 @@ class Map:
         py = lint(self.pos[2])/16
         dx = WIDTH/32
         dy = HEIGHT/32
-        low = lint(self.pos[1]-16)
-        high = lint(self.pos[1]+16)
+        low = lint(self.pos[1]-8)
+        high = lint(self.pos[1]+8)
         for y in xrange(py-dy,py+dy+1):
             for x in xrange(px-dx,px+dx+1):
                 cell = (x,y)
                 if not cell in self.cache:
                     self.cache[cell] = MapTile(self.canvas, cell, self.pos)
-                self.cache[cell].update(low, high, self.blocks)
+                self.cache[cell].schedule(low, high)
         self.dirty = False
     def __click(self,event):
         pos = list(self.pos)
@@ -208,26 +226,33 @@ class Map:
         for i in p:
             x = ( p[i][0][0]-self.pos[0]+WIDTH /2.0)*SCALE+2
             y = (-p[i][0][2]+self.pos[2]+HEIGHT/2.0)*SCALE+2
+            dx = -math.sin(p[i][3]*math.pi/180)
+            dy = -math.cos(p[i][3]*math.pi/180)
+            path = (x+10*dx,y+10*dy,x+25*dx,y+25*dy)
             if not i in self.name_tags:
                 if not i in self.names:
                     continue
-                #t = self.canvas.create_text(x, y, text=self.names[i], fill="white")
-                t = self.canvas.create_text(x, y, text="X", fill="white")
+                t = self.canvas.create_text(x, y, text=self.names[i], fill="white")
                 self.name_tags[i] = t
+                a = self.canvas.create_line(path, arrow=LAST, fill="white")
+                self.name_arrows[i] = a
             else:
                 self.canvas.coords(self.name_tags[i], x, y)
+                self.canvas.coords(self.name_arrows[i], *path)
     def player_info(self, p):
         self.names = p
         rm = set(self.name_tags.keys()) - set(p.keys())
         for i in rm:
             self.canvas.delete(self.name_tags[i])
             del self.name_tags[i]
+            self.canvas.delete(self.name_arrows[i])
+            del self.name_arrows[i]
 
 root = Tk()
 root.title("Minetest bot")
 
-#shop = ShopKeeper()
-#m.install_handler(shop)
+shop = ShopKeeper()
+m.install_handler(shop)
 chat = Chatbox(root)
 m.install_handler(chat)
 mapview = Map(root)

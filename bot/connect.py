@@ -150,9 +150,10 @@ def get_node(pos):
 def init(name, pwd):
     print "Logging in as", name
     self.name = name
-    from hashlib import sha1
-    from base64 import b64encode
-    pwd = b64encode(sha1(name+pwd).digest())
+    if pwd:
+        from hashlib import sha1
+        from base64 import b64encode
+        pwd = b64encode(sha1(name+pwd).digest())
     p = self.reliable()
     p.u8(1) # original
     p.u16(0x10) # init
@@ -336,6 +337,7 @@ def wait(*args):
             if len(data) != nodecount * 3:
                 raise AssertionError("block data size mismatch: %d != %d" % (len(data), nodecount * 3))
             self.cur.execute('''INSERT OR REPLACE INTO blocks (x,y,z,data) VALUES (?,?,?,?);''', pos+(buffer(data),))
+            self.got_blocks([pos])
             __handle.blockdata(pos,wrap_node_data(data))
             p = Package(dec.unused_data)
             
@@ -350,12 +352,16 @@ def wait(*args):
         elif cmd==0x24: # player info
             print msg, "playerinfo:"
             pi = {}
+            pid= {}
             while p.available():
                 id = p.u16()
-                name = p.player_name().strip()
+                name = p.player_name().strip(" \n\r\t\x00")
                 print "\t",id, "=", name
                 pi[id] = name
+                pid[name] = id
             __handle.player_info(pi)
+            self.player_info = pi
+            self.player_id = pid
         elif cmd==0x27: # player inventory
             print msg, "player inventory"
         elif cmd==0x28: # object data (player pos's & other objects)
@@ -366,11 +372,12 @@ def wait(*args):
                 id = p.u16()
                 pos = tuple([i/1000.0 for i in p.v3s32()])
                 speed = tuple([i/1000.0 for i in p.v3s32()])
-                pitch = p.s32()/1000.0
-                yaw = p.s32()/1000.0
+                pitch = p.s32()/100.0
+                yaw = p.s32()/100.0
                 pd[id]=(pos,speed,pitch,yaw)
                 #print "\t",id,":",pd[id]
             __handle.player_data(pd)
+            self.player_data=pd
             blocks = p.u16()
             #for i in xrange(blocks):
                 #pos = p.v3s16()
@@ -390,7 +397,7 @@ def wait(*args):
                 rem_cnt = p.u16()
                 for i in xrange(rem_cnt):
                     rem_id = p.u16()
-                    print "\tremove %d" % rem_id
+                    #print "\tremove %d" % rem_id
                 msg += " add"
                 add_cnt = p.u16()
                 for i in xrange(add_cnt):
@@ -398,7 +405,7 @@ def wait(*args):
                     objtype = p.u8()
                     length = p.u16()
                     data = p.obtain(length)
-                    print "\tadd %d: type=%d, data=%s" % (add_id, objtype, repr(data))
+                    #print "\tadd %d: type=%d, data=%s" % (add_id, objtype, repr(data))
             except:
                 print >>sys.stderr, "Something went wrong parsing active objects"
         elif cmd==0x33: # tell hp
