@@ -3,6 +3,7 @@ from struct import Struct
 import sys
 import codecs
 import zlib
+import sqlite3
 
 class Package:
     def __wrapper(type):
@@ -33,6 +34,7 @@ class Package:
         return token
     
     s32 = __wrapper("!i")
+    v3s32 = __vwrapper("!iii")
     u32 = __wrapper("!I")
     s16 = __wrapper("!h")
     v3s16 = __vwrapper("!hhh")
@@ -84,6 +86,13 @@ class Node:
         else:
             self.content = (p0<<4) + (p2>>4)
 
+nodecount = 16**3
+def wrap_node_data(data):
+    def nodes(x,y,z):
+        i = x + y*16 + z*256
+        return Node(ord(data[i]), ord(data[i+nodecount]), ord(data[i+2*nodecount]))
+    return nodes
+
 self = __self()
 protocol_id = 0x4f457403
 peer = 0
@@ -109,7 +118,7 @@ def reliable():
     self.seqnr = (self.seqnr + 1) & 0xffff
     return p
 
-def connect(hostname='127.0.0.1', port=30000):
+def connect(hostname='localhost', port=30000):
     print "Connecting"
     self.udp = socket(AF_INET,SOCK_DGRAM)
     self.udp.connect((hostname, port))
@@ -121,9 +130,21 @@ def connect(hostname='127.0.0.1', port=30000):
     # wait for peer id to be assigned.
     while self.peer==0:
         self.wait()
+
+    self.conn = sqlite3.connect("cache-%s-%d.db"%(hostname,port))
+    self.cur = self.conn.cursor()
+    self.cur.execute('''create table if not exists blocks (x INTEGER, y INTEGER, z INTEGER, data BLOB, PRIMARY KEY(x,y,z))''')
+
     print "Connected"
     self.connected = True
     __handle.connected()
+
+def get_node(pos):
+    ref = self.cur.execute('''SELECT data FROM blocks WHERE x=? AND y=? AND z=?''', pos)
+    f = None
+    for r in ref:
+        f = wrap_node_data(r[0])
+    return f
 
 # message sending
 def init(name, pwd):
@@ -176,6 +197,8 @@ def chat(msg):
     
 def disconnect():
     print "Disconnecting"
+    if hasattr(self, "conn"):
+        self.conn.commit()
     self.connected = False
     __handle.disconnect()
     p = self.basic()
@@ -282,7 +305,7 @@ def wait(*args):
         ctype = p.u8()
         if ctype==0: # ACK
             seqnum = p.u16()
-            print msg, "acknowledging", seqnum
+            #print msg, "acknowledging", seqnum
         elif ctype==1: # set peer id
             self.peer = p.u16()
             print msg, "setting peer id", self.peer
@@ -307,18 +330,13 @@ def wait(*args):
             # block node coordinates
             pos = p.v3s16() 
             flags = p.u8()
-            nodecount = 16**3
             print msg, "block data @ (%d,%d,%d) flags=%s" % (pos+(bin(flags),))
             dec = zlib.decompressobj()
             data = dec.decompress(p.remains())
             if len(data) != nodecount * 3:
                 raise AssertionError("block data size mismatch: %d != %d" % (len(data), nodecount * 3))
-
-            def nodes(x,y,z):
-                i = x + y*16 + z*256
-                return Node(ord(data[i]), ord(data[i+nodecount]), ord(data[i+2*nodecount]))
-                            
-            __handle.blockdata(pos,nodes)
+            self.cur.execute('''INSERT OR REPLACE INTO blocks (x,y,z,data) VALUES (?,?,?,?);''', pos+(buffer(data),))
+            __handle.blockdata(pos,wrap_node_data(data))
             p = Package(dec.unused_data)
             
         elif cmd==0x21: # add node
@@ -331,14 +349,32 @@ def wait(*args):
             print msg, "remove node @ (%d,%d,%d)" % pos
         elif cmd==0x24: # player info
             print msg, "playerinfo:"
+            pi = {}
             while p.available():
                 id = p.u16()
-                name = p.player_name()
-                print "\t",id, "=", name.strip()
+                name = p.player_name().strip()
+                print "\t",id, "=", name
+                pi[id] = name
+            __handle.player_info(pi)
         elif cmd==0x27: # player inventory
             print msg, "player inventory"
         elif cmd==0x28: # object data (player pos's & other objects)
+            players = p.u16()
+            pd={}
             #print msg, "object data"
+            for i in xrange(players):
+                id = p.u16()
+                pos = tuple([i/1000.0 for i in p.v3s32()])
+                speed = tuple([i/1000.0 for i in p.v3s32()])
+                pitch = p.s32()/1000.0
+                yaw = p.s32()/1000.0
+                pd[id]=(pos,speed,pitch,yaw)
+                #print "\t",id,":",pd[id]
+            __handle.player_data(pd)
+            blocks = p.u16()
+            #for i in xrange(blocks):
+                #pos = p.v3s16()
+                # {block objects}?
             pass
         elif cmd==0x29: # server time
             time = p.u16()
