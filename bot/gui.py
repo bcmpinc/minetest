@@ -37,7 +37,12 @@ class ShopKeeper:
             id = m.player_id[name]
             if msg == u'summon shop':
                 data = m.player_data[id]
-                m.setpos(data[0],0,0)
+                dx = -math.sin(data[3]*math.pi/180)
+                dy =  math.cos(data[3]*math.pi/180)
+                pos = data[0]
+                pos = (pos[0]+4*dx, pos[1], pos[2]+4*dy)
+                
+                m.setpos(pos,0,data[3]+180)
             
 class Chatbox:
     def __init__(self, master):
@@ -135,6 +140,7 @@ class MapTile:
         self.dirty = True
         self.cell = cell
         self.scheduled = False
+        self.meta = {}
     def repaint(self):
         self.scheduled = False
         #print "Updating tile", self.cell, "at coords", self.canvas.coords(self.imgelt)
@@ -164,6 +170,29 @@ class MapTile:
                         break
                     print hex(c)
         self.dirty = False
+
+        # meta data
+        low = self.low/16
+        high = self.high/16
+        block = self.meta
+        for y in xrange(low,high+1):
+            meta = m.get_meta((self.cell[0],y,self.cell[1]))
+            if meta is None:
+                continue
+            for node in meta:
+                node2 = (node[0], node[2])
+                if not node2 in block:
+                    (x,y)=self.canvas.coords(self.imgelt)
+                    x+=node[0]*SCALE
+                    y+=(15-node[2])*SCALE
+                    if meta[node].id==14:
+                        box = self.canvas.create_text(x+2, y+2, text=meta[node].text, fill="orange")
+                        block[node2] = (box, {})
+                    else:
+                        box = self.canvas.create_rectangle((x,y,x+SCALE-1,y+SCALE-1), outline="orange", activewidth=2)
+                        block[node2] = (box, {})
+
+                        
     def schedule(self,low,high):
         self.low = low
         self.high = high
@@ -177,6 +206,7 @@ class Map:
     names={}
     name_tags={}
     name_arrows={}
+    meta={}
     dirty=False
     def __init__(self, master):
         self.canvas = Canvas(master, width=WIDTH*SCALE, height=HEIGHT*SCALE, borderwidth=1, relief=SUNKEN)
@@ -228,7 +258,8 @@ class Map:
             y = (-p[i][0][2]+self.pos[2]+HEIGHT/2.0)*SCALE+2
             dx = -math.sin(p[i][3]*math.pi/180)
             dy = -math.cos(p[i][3]*math.pi/180)
-            path = (x+10*dx,y+10*dy,x+25*dx,y+25*dy)
+            path = (x-8*dx,y-8*dy,x+8*dx,y+8*dy)
+            y+=15
             if not i in self.name_tags:
                 if not i in self.names:
                     continue
@@ -260,9 +291,9 @@ m.install_handler(mapview)
 pos = Position(root)
 m.install_handler(pos)
 try:
-    m.connect()
-    #m.connect("mt1.gameboom.net")
-    m.init("bcmpinc-test","test")
+    #m.connect()
+    m.connect("mt1.gameboom.net")
+    m.init("bcmpinc-test","")
     while m.pos is None:
         m.wait()
     root.createfilehandler(m.udp, READABLE, m.wait)

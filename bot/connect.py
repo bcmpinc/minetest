@@ -61,6 +61,14 @@ class Package:
             return self.s32()/1000.0
         else:
             return self.s32(int(value*1000))
+    def string(self, value=None):
+        if value is None:
+            length = self.u16()
+            return self.obtain(length)
+        else:
+            self.u16(len(value))
+            self.append(value)
+            return self
     def wstring(self, value=None):
         if value is None:
             length = self.u16()
@@ -85,6 +93,22 @@ class Node:
             self.content = p0
         else:
             self.content = (p0<<4) + (p2>>4)
+
+class NodeMeta:
+    def __init__(self, id, data):
+        self.id = id
+        p = Package(data)
+        if id == 14: # CONTENT_SIGN_WALL
+            self.text = p.string()
+        elif id == 15: # CONTENT_CHEST
+            # Inventory::deSerialize (8*4 slots)
+            pass
+        elif id == 16: # CONTENT_FURNACE
+            # Inventory::deSerialize (1+1+4 slots (fuel,src,dst)
+            # 2 ints (./10.0)
+            pass
+        else:
+            print >>sys.stderr, "Unknown node metadata type:", id
 
 nodecount = 16**3
 def wrap_node_data(data):
@@ -133,7 +157,7 @@ def connect(hostname='localhost', port=30000):
 
     self.conn = sqlite3.connect("cache-%s-%d.db"%(hostname,port))
     self.cur = self.conn.cursor()
-    self.cur.execute('''create table if not exists blocks (x INTEGER, y INTEGER, z INTEGER, data BLOB, PRIMARY KEY(x,y,z))''')
+    self.cur.execute('''create table if not exists blocks (x INTEGER, y INTEGER, z INTEGER, data BLOB, meta BLOB, PRIMARY KEY(x,y,z))''')
 
     print "Connected"
     self.connected = True
@@ -145,6 +169,35 @@ def get_node(pos):
     for r in ref:
         f = wrap_node_data(r[0])
     return f
+
+def parse_meta(zdata):
+    dec = zlib.decompressobj()
+    data = dec.decompress(zdata)
+    p = Package(data)
+    version = p.u16()
+    count = p.u16()
+    #print "\tGot Metadata version=%d, count=%d" % (version, count)
+    meta = {}
+    for i in xrange(count):
+        mpos = p.u16()
+        x = mpos%16; mpos/=16
+        y = mpos%16; mpos/=16
+        z = mpos%16
+
+        # NodeMetadata::deSerialize:
+        id = p.s16()
+        data = p.string()
+        meta[(x,y,z)] = NodeMeta(id, data)
+    return meta
+
+def get_meta(pos):
+    ref = self.cur.execute('''SELECT meta FROM blocks WHERE x=? AND y=? AND z=?''', pos)
+    f = None
+    for r in ref:
+        if r[0]!=None:
+            f = parse_meta(r[0])
+    return f
+    
 
 # message sending
 def init(name, pwd):
@@ -331,15 +384,18 @@ def wait(*args):
             # block node coordinates
             pos = p.v3s16() 
             flags = p.u8()
+
+            # block nodes:
             print msg, "block data @ (%d,%d,%d) flags=%s" % (pos+(bin(flags),))
             dec = zlib.decompressobj()
             data = dec.decompress(p.remains())
             if len(data) != nodecount * 3:
                 raise AssertionError("block data size mismatch: %d != %d" % (len(data), nodecount * 3))
-            self.cur.execute('''INSERT OR REPLACE INTO blocks (x,y,z,data) VALUES (?,?,?,?);''', pos+(buffer(data),))
+            meta = dec.unused_data
+            self.cur.execute('''INSERT OR REPLACE INTO blocks (x,y,z,data,meta) VALUES (?,?,?,?,?);''', pos+(buffer(data),buffer(meta)))
             self.got_blocks([pos])
+
             __handle.blockdata(pos,wrap_node_data(data))
-            p = Package(dec.unused_data)
             
         elif cmd==0x21: # add node
             # block node coordinates
