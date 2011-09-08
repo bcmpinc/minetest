@@ -124,8 +124,10 @@ tilecolors={
     0x812:'#684e2a', # CONTENT_CLAY
     0x813:'#3a6912', # CONTENT_PAPYRUS
 
-    0x01e:'#ffcc66', # RAILS
-    0x816:'#66ff33', # BUSH
+    0x01e:'#ccc066', # CONTENT_RAIL
+    0x01f:'#ffcc66', # CONTENT_LADDER
+    0x815:'#68684e', # CONTENT_JUNGLETREE
+    0x816:'#66ff33', # CONTENT_JUNGLEGRASS
 }
 
 SCALE=4
