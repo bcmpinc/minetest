@@ -98,24 +98,27 @@ class Position:
 tilecolors={
        -1:'#000000', # Might not be the top item
     0x000:'#808080', # CONTENT_STONE
-    0x800:'#6c8633', # CONTENT_GRASS
     0x002:'#27426a', # CONTENT_WATER
     0x003:'#ffff00', # CONTENT_TORCH
+    0x009:'#27426a', # CONTENT_WATERSOURCE
+    0x00e:'#755629', # CONTENT_SIGN_WALL
+    0x00f:'#804f00', # CONTENT_CHEST
+    0x010:'#767676', # CONTENT_FURNACE
+    0x015:'#674e2a', # CONTENT_FENCE
+    0x01e:'#ccc066', # CONTENT_RAIL
+    0x01f:'#ffcc66', # CONTENT_LADDER
+
+    0x800:'#6c8633', # CONTENT_GRASS
     0x801:'#563a1f', # CONTENT_TREE
     0x802:'#305f08', # CONTENT_LEAVES
     0x803:'#668126', # CONTENT_GRASS_FOOTSTEPS
     0x804:'#b2b200', # CONTENT_MESE
     0x805:'#655424', # CONTENT_MUD
-    0x009:'#27426a', # CONTENT_WATERSOURCE
     0x808:'#684e2a', # CONTENT_WOOD
     0x809:'#d2c29c', # CONTENT_SAND
-    0x00e:'#755629', # CONTENT_SIGN_WALL
-    0x00f:'#804f00', # CONTENT_CHEST
-    0x010:'#767676', # CONTENT_FURNACE
     0x80a:'#7b7b7b', # CONTENT_COBBLE
     0x80b:'#c7c7c7', # CONTENT_STEEL
     0x80c:'#b7b7de', # CONTENT_GLASS
-    0x015:'#674e2a', # CONTENT_FENCE
     0x80d:'#dbcab2', # CONTENT_MOSSYCOBBLE
     0x80e:'#9a4e06', # CONTENT_GRAVEL
     0x80f:'#cc0000', # CONTENT_SANDSTONE
@@ -123,9 +126,6 @@ tilecolors={
     0x811:'#aa3219', # CONTENT_BRICK
     0x812:'#684e2a', # CONTENT_CLAY
     0x813:'#3a6912', # CONTENT_PAPYRUS
-
-    0x01e:'#ccc066', # CONTENT_RAIL
-    0x01f:'#ffcc66', # CONTENT_LADDER
     0x815:'#68684e', # CONTENT_JUNGLETREE
     0x816:'#66ff33', # CONTENT_JUNGLEGRASS
 }
@@ -152,6 +152,7 @@ class MapTile:
         self.image.put('#ff00ff',(0,0,16*SCALE,16*SCALE))
         for x in xrange(16):
             for z in xrange(16):
+                wet = False
                 for y in xrange(self.high,self.low,-1):
                     if cur_block_y != y/16:
                         cur_block_y = y/16
@@ -165,12 +166,20 @@ class MapTile:
                     c = n.content
                     if c==126:
                         continue
+                    if c==2 or c==9:
+                        wet = True
+                        continue
                     if c in tilecolors:
                         if y==self.high and not c == 3:
                             c=-1
-                        self.image.put(tilecolors[c], (x*SCALE,z*SCALE,x*SCALE+SCALE,z*SCALE+SCALE))                    
+                        self.image.put(tilecolors[c], (x*SCALE,z*SCALE,x*SCALE+SCALE,z*SCALE+SCALE))
                         break
                     print hex(c)
+                if wet:
+                    for px in xrange(x*SCALE,x*SCALE+SCALE):
+                        for pz in xrange(z*SCALE,z*SCALE+SCALE):
+                            if (px+pz)&1:
+                                self.image.put('#0080ff', (px,pz))
         self.dirty = False
 
         # meta data
